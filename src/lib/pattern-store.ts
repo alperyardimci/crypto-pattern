@@ -134,50 +134,47 @@ export async function mergePatterns(
   const stillPending: PendingSignal[] = [];
 
   for (const ps of pending) {
-    ps.periodsWaited += 1; // Bir periyot daha geçti
+    ps.periodsWaited += 1;
 
     if (ps.periodsWaited >= ps.lagPeriods) {
       // Gecikme süresi doldu — takipçiyi kontrol et
       const key = `${ps.leader}:${ps.follower}`;
       const pattern = storedMap.get(key);
       if (pattern) {
-        pattern.totalSignals += 1;
-
+        // Takipçinin son mumdaki değişimi
         const followerChange = lastCandleChanges[ps.follower];
         if (followerChange !== undefined && Math.abs(followerChange) >= MIN_FOLLOWER_MOVE) {
+          // Takipçi anlamlı hareket etti — sinyal sayılır
+          pattern.totalSignals += 1;
           const followerDir = followerChange > 0 ? 1 : -1;
           if (followerDir === ps.leaderDir) {
-            // Takipçi %2+ aynı yönde → başarılı
             pattern.successfulSignals += 1;
           }
-          // Takipçi %2+ ters yönde → başarısız (totalSignals zaten arttı)
+          pattern.probability = pattern.totalSignals > 0
+            ? Math.round((pattern.successfulSignals / pattern.totalSignals) * 100)
+            : 0;
+          pattern.lastUpdated = now;
         }
-        // Takipçi %2 altında → zayıf hareket, bu sinyali dikkate alma
-        // totalSignals'ı geri al çünkü anlamlı bir sonuç yok
-        else {
-          pattern.totalSignals -= 1; // Geri al — ne başarılı ne başarısız
-        }
-
-        pattern.probability = pattern.totalSignals > 0
-          ? Math.round((pattern.successfulSignals / pattern.totalSignals) * 100)
-          : 0;
-        pattern.lastUpdated = now;
+        // Takipçi %2 altında → zayıf hareket, sinyal dikkate alınmaz
       }
-      // Süresi dolmuş, listeden çıkar (stillPending'e ekleme)
     } else {
-      // Henüz süresi dolmadı — beklemeye devam
       stillPending.push(ps);
     }
   }
 
   // 2. Yeni bekleyen sinyaller oluştur (lider %4+ hareket ettiyse)
+  //    Aynı çift için zaten bekleyen sinyal varsa duplicate oluşturma
   if (!isFirstCompute) {
+    const pendingKeys = new Set(stillPending.map((ps) => `${ps.leader}:${ps.follower}`));
+
     for (const fp of fresh) {
       if (fp.direction !== "aynı") continue;
 
+      const key = `${fp.leader}:${fp.follower}`;
+      if (pendingKeys.has(key)) continue; // Zaten bekliyor, duplicate oluşturma
+
       const leaderChange = lastCandleChanges[fp.leader];
       if (leaderChange !== undefined && Math.abs(leaderChange) >= MIN_LEADER_MOVE) {
-        // Lider hareket etti → bekleyen sinyal oluştur
         stillPending.push({
           leader: fp.leader,
           follower: fp.follower,
@@ -186,12 +183,15 @@ export async function mergePatterns(
           periodsWaited: 0,
           createdTs: now,
         });
+        pendingKeys.add(key);
       }
     }
   }
 
-  // 3. Bekleyen sinyalleri kaydet
-  await savePendingSignals(stillPending);
+  // 3. Eski bekleyen sinyalleri temizle (48 saatten eski — takılıp kalmış olabilir)
+  const maxPendingAge = 48 * 60 * 60 * 1000;
+  const cleanedPending = stillPending.filter((ps) => (now - ps.createdTs) < maxPendingAge);
+  await savePendingSignals(cleanedPending);
 
   // 4. Fresh paternleri depoya ekle/güncelle (ilk hesaplama veya yeni patern)
   for (const fp of fresh) {

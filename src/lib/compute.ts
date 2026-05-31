@@ -101,7 +101,24 @@ export async function computePatternData() {
 
   let patterns: StoredPattern[];
 
-  // Her coin'in son mumdaki % değişimi (merge'de kullanılacak)
+  // Coin değişimleri — tek seferde hesapla, her yerde kullan
+  const coinChanges: Record<string, number> = {};
+  const dailyChanges: Record<string, number> = {};
+
+  for (const [coin, candles] of candleMap) {
+    const sorted = [...candles].sort((a, b) => a.ts - b.ts);
+    if (sorted.length < 2) continue;
+    const last = sorted[sorted.length - 1];
+    const prev = sorted[sorted.length - 2];
+    coinChanges[coin] = Math.round(((last.close - prev.close) / prev.close) * 1000) / 10;
+
+    if (sorted.length >= 7) {
+      const dayAgo = sorted[sorted.length - 7];
+      dailyChanges[coin] = Math.round(((last.close - dayAgo.close) / dayAgo.close) * 1000) / 10;
+    }
+  }
+
+  // lastCandleChanges = coinChanges'in yuvarlama öncesi hali (merge için)
   const lastCandleChanges: Record<string, number> = {};
   for (const [coin, candles] of candleMap) {
     const sorted = [...candles].sort((a, b) => a.ts - b.ts);
@@ -120,32 +137,16 @@ export async function computePatternData() {
     // Depoya kaydet
     await saveStore(patterns, { lastCandleTs: latestTs, lastComputeTs: Date.now() });
   } else {
-    // Yeni veri yok — mevcut depoyu kullan
-    patterns = stored;
+    // Yeni veri yok ama bekleyen sinyaller olabilir — onları kontrol et
+    patterns = await mergePatterns(stored, [], false, lastCandleChanges);
+    await saveStore(patterns, { lastCandleTs: storeMeta!.lastCandleTs, lastComputeTs: Date.now() });
   }
 
   // Sektör verileri her zaman güncel hesaplanır (hafif)
   const sectorFlows = detectSectorFlows(candleMap, bar);
   const sectorPerformance = calcSectorPerformance(candleMap);
 
-  // Coin değişimleri (formatStoredPatterns'dan önce hesaplanmalı)
-  const coinChanges: Record<string, number> = {};
-  const dailyChanges: Record<string, number> = {};
-
-  for (const [coin, candles] of candleMap) {
-    const sorted = [...candles].sort((a, b) => a.ts - b.ts);
-    if (sorted.length < 2) continue;
-    const last = sorted[sorted.length - 1];
-    const prev = sorted[sorted.length - 2];
-    coinChanges[coin] = Math.round(((last.close - prev.close) / prev.close) * 1000) / 10;
-
-    if (sorted.length >= 7) {
-      const dayAgo = sorted[sorted.length - 7];
-      dailyChanges[coin] = Math.round(((last.close - dayAgo.close) / dayAgo.close) * 1000) / 10;
-    }
-  }
-
-  // Frontend format (coinChanges hesaplandıktan sonra)
+  // Frontend format
   const formattedPatterns = formatStoredPatterns(patterns, coinChanges);
   const signals = detectSignals(candleMap, formattedPatterns, sectorFlows);
 
