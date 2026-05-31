@@ -118,27 +118,23 @@ export async function computePatternData() {
     }
   }
 
-  // lastCandleChanges = coinChanges'in yuvarlama öncesi hali (merge için)
+  // lastCandleChanges: merge için ham % değişim (yuvarlama yok)
   const lastCandleChanges: Record<string, number> = {};
-  for (const [coin, candles] of candleMap) {
-    const sorted = [...candles].sort((a, b) => a.ts - b.ts);
-    if (sorted.length < 2) continue;
-    const last = sorted[sorted.length - 1];
-    const prev = sorted[sorted.length - 2];
-    lastCandleChanges[coin] = ((last.close - prev.close) / prev.close) * 100;
+  for (const coin in coinChanges) {
+    lastCandleChanges[coin] = coinChanges[coin]; // Zaten % cinsinden
   }
 
   if (newDataAvailable) {
     // Yeni mum gelmiş — paternleri yeniden hesapla ve birleştir
     const freshPatterns = detectPatterns(candleMap, bar);
     const isFirstCompute = !storeMeta;
-    patterns = await mergePatterns(stored, freshPatterns, isFirstCompute, lastCandleChanges);
+    patterns = await mergePatterns(stored, freshPatterns, isFirstCompute, lastCandleChanges, true);
 
     // Depoya kaydet
     await saveStore(patterns, { lastCandleTs: latestTs, lastComputeTs: Date.now() });
   } else {
-    // Yeni veri yok ama bekleyen sinyaller olabilir — onları kontrol et
-    patterns = await mergePatterns(stored, [], false, lastCandleChanges);
+    // Yeni veri yok — bekleyen sinyallerin periodsWaited'ını artırma
+    patterns = await mergePatterns(stored, [], false, lastCandleChanges, false);
     await saveStore(patterns, { lastCandleTs: storeMeta!.lastCandleTs, lastComputeTs: Date.now() });
   }
 

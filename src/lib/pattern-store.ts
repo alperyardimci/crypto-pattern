@@ -120,7 +120,8 @@ export async function mergePatterns(
     details: string;
   }>,
   isFirstCompute: boolean,
-  lastCandleChanges: Record<string, number>
+  lastCandleChanges: Record<string, number>,
+  isNewCandle: boolean = true // Yeni mum geldi mi? periodsWaited sadece yeni mumda artar
 ): Promise<StoredPattern[]> {
   const now = Date.now();
   const storedMap = new Map<string, StoredPattern>();
@@ -134,7 +135,7 @@ export async function mergePatterns(
   const stillPending: PendingSignal[] = [];
 
   for (const ps of pending) {
-    ps.periodsWaited += 1;
+    if (isNewCandle) ps.periodsWaited += 1; // Sadece yeni mum geldiğinde artır
 
     if (ps.periodsWaited >= ps.lagPeriods) {
       // Gecikme süresi doldu — takipçiyi kontrol et
